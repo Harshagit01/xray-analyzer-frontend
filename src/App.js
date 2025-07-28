@@ -17,7 +17,7 @@ let app, auth, db;
 function App() {
   const [user, setUser] = useState(null);
   const [userId, setUserId] = useState(null);
-  const [isAuthReady, setIsAuthReady] = useState(false);
+  const [isAuthReady, setIsAuthReady] = useState(false); // Tracks if Firebase auth is initialized
   const [selectedFile, setSelectedFile] = useState(null);
   const [previewImage, setPreviewImage] = useState(null);
   const [analysisResult, setAnalysisResult] = useState('');
@@ -27,18 +27,15 @@ function App() {
   const [analysisHistory, setAnalysisHistory] = useState([]);
   const [activeTab, setActiveTab] = useState('analyze');
 
-  // Removed: Canvas drawing states and logic
-
   // Initialize Firebase and handle authentication
   useEffect(() => {
     try {
-      // Use the firebaseConfig from environment variables or default
+      // Check if firebaseConfig is valid before initializing
       if (Object.keys(firebaseConfig).length === 0) {
         console.warn("Firebase config is empty. Please ensure REACT_APP_FIREBASE_CONFIG is set in .env.local or Firebase is initialized in Canvas.");
-        // If no config, we can't initialize Firebase. Show a modal and return.
         setModalMessage("Firebase configuration is missing. Please check your .env.local file or run in Canvas environment.");
         setShowModal(true);
-        setIsAuthReady(true); // Mark ready to stop loading, but with an error
+        setIsAuthReady(true); // Mark ready but with an error state
         return;
       }
 
@@ -48,6 +45,7 @@ function App() {
 
       const unsubscribe = onAuthStateChanged(auth, async (currentUser) => {
         if (!currentUser) {
+          // If no user is logged in, try to sign in with custom token or anonymously
           try {
             if (initialAuthToken) {
               await signInWithCustomToken(auth, initialAuthToken);
@@ -63,24 +61,24 @@ function App() {
           }
         }
         setUser(auth.currentUser);
-        // Use auth.currentUser?.uid for logged-in users, otherwise a random UUID for anonymous
+        // Set userId based on current user or a random UUID for anonymous
         setUserId(auth.currentUser?.uid || crypto.randomUUID());
-        setIsAuthReady(true);
+        setIsAuthReady(true); // Mark authentication as ready
       });
 
-      return () => unsubscribe();
+      return () => unsubscribe(); // Clean up the auth listener
     } catch (error) {
       console.error("Failed to initialize Firebase:", error);
       setModalMessage(`Firebase initialization failed: ${error.message}.`);
       setShowModal(true);
+      setIsAuthReady(true); // Mark ready but with an error
     }
   }, []); // Empty dependency array means this runs once on mount
 
   // Fetch analysis history
   useEffect(() => {
     // Only fetch history if Firebase is ready and userId is available
-    if (isAuthReady && userId && db) {
-      // Define the collection path for private user data
+    if (isAuthReady && userId && db) { // Ensure db is also available
       const historyCollectionRef = collection(db, `artifacts/${appId}/users/${userId}/xray_analyses`);
 
       // Order by timestamp to get most recent first
@@ -111,30 +109,26 @@ function App() {
       reader.onloadend = () => {
         setPreviewImage(reader.result);
         setAnalysisResult('');
-        // Removed: setDrawnShapes([]); // Clear drawings on new image
-        // Removed: setCurrentShape(null);
       };
       reader.readAsDataURL(file);
     } else {
       setSelectedFile(null);
       setPreviewImage(null);
       setAnalysisResult('');
-      // Removed: setDrawnShapes([]);
-      // Removed: setCurrentShape(null);
     }
   };
 
-  // Removed: Canvas Drawing Logic (useEffect, getCanvasCoordinates, startDrawing, draw, endDrawing, clearDrawings)
-
-  // Simulate AI analysis using Gemini API and save to Firestore
+  // Handle AI analysis via Backend and then Gemini
   const handleAnalyze = async () => {
+    // These checks should ideally be redundant if the button is disabled correctly,
+    // but they serve as a fallback for robustness.
     if (!selectedFile) {
       setModalMessage("Please upload an X-ray image first.");
       setShowModal(true);
       return;
     }
-    if (!userId) {
-      setModalMessage("User not authenticated. Please wait for authentication to complete.");
+    if (!isAuthReady || !userId) { // More robust check
+      setModalMessage("Authentication is not ready. Please wait a moment.");
       setShowModal(true);
       return;
     }
@@ -143,56 +137,75 @@ function App() {
     setAnalysisResult('');
 
     try {
-      // Simulate a binary classification result (Normal/Abnormal)
-      const isAbnormal = Math.random() > 0.5; // 50% chance of being abnormal for simulation
-      let classificationResult = isAbnormal ? "Abnormal" : "Normal";
+      // 1. Send image to your Python Flask Backend for AI classification
+      const formData = new FormData();
+      formData.append('image', selectedFile);
+      formData.append('userId', userId);
 
-      // Removed: drawingDescription construction
-      const basePrompt = `Generate a detailed mock X-ray report for a lateral view of a human foot, specifically mentioning the calcaneum, plantar fascia, medial longitudinal arch, and the presence/absence of a calcaneal spur. The simulated AI classification for this image is: **${classificationResult}**. Based on this classification, provide findings. Example for Normal: "Calcaneal spur: Absent. Medial longitudinal arch: Maintained. Plantar fascia: Normal." Example for Abnormal: "Calcaneal spur: Present, superior aspect. Medial longitudinal arch: Mildly flattened. Plantar fascia: Thickened."`;
+      const backendApiUrl = 'http://127.0.0.1:5000/api/analyze_xray'; // Your Flask backend URL
 
-      const combinedPrompt = basePrompt; // No drawing description to combine
+      const backendResponse = await fetch(backendApiUrl, {
+        method: 'POST',
+        body: formData,
+      });
+
+      const backendResult = await backendResponse.json();
+      let classificationResultFromBackend = "Unknown";
+
+      if (backendResult.status === "success" && backendResult.classificationResult) {
+        classificationResultFromBackend = backendResult.classificationResult;
+        console.log("AI Classification from Backend:", classificationResultFromBackend);
+      } else {
+        console.error("Backend response error:", backendResult.error || backendResult);
+        setModalMessage(`Error from backend: ${backendResult.error || 'Unknown error'}. Please ensure your backend is running.`);
+        setShowModal(true);
+        setIsLoading(false);
+        return;
+      }
+
+      // 2. Call Gemini API to generate the detailed report based on the backend's classification
+      const basePrompt = `Generate a detailed mock X-ray report for a lateral view of a human foot, specifically mentioning the calcaneum, plantar fascia, medial longitudinal arch, and the presence/absence of a calcaneal spur. The AI classification for this image is: **${classificationResultFromBackend}**. Based on this classification, provide findings. Example for Normal: 'Calcaneal spur: Absent. Medial longitudinal arch: Maintained. Plantar fascia: Normal.' Example for Abnormal: 'Calcaneal spur: Present, superior aspect. Medial longitudinal arch: Mildly flattened. Plantar fascia: Thickened.'`;
 
       let chatHistory = [];
-      chatHistory.push({ role: "user", parts: [{ text: combinedPrompt }] });
+      chatHistory.push({ role: "user", parts: [{ text: basePrompt }] });
 
       const payload = { contents: chatHistory };
-      const apiKey = ""; // Canvas will automatically provide this in runtime, or use a real key for local testing
+      const apiKey = process.env.REACT_APP_GEMINI_API_KEY || "AIzaSyCyGCsODe8sjRJtAynWUG3yx7zgHU-RfAc"; // Canvas will automatically provide this in runtime, or use a real key for local testing
       const apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${apiKey}`;
 
-      const response = await fetch(apiUrl, {
+      const geminiResponse = await fetch(apiUrl, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload)
       });
 
-      const result = await response.json(); // Use await here
-      let generatedReport = "Could not generate analysis report.";
+      const geminiResult = await geminiResponse.json();
+      let generatedReport = "Could not generate analysis report from Gemini.";
 
-      if (result.candidates && result.candidates.length > 0 &&
-        result.candidates[0].content && result.candidates[0].content.parts &&
-        result.candidates[0].content.parts.length > 0) {
-        generatedReport = result.candidates[0].content.parts[0].text;
+      if (geminiResult.candidates && geminiResult.candidates.length > 0 &&
+        geminiResult.candidates[0].content && geminiResult.candidates[0].content.parts &&
+        geminiResult.candidates[0].content.parts.length > 0) {
+        generatedReport = geminiResult.candidates[0].content.parts[0].text;
       } else {
-        console.error("Gemini API response structure unexpected:", result);
+        console.error("Gemini API response structure unexpected:", geminiResult);
       }
       setAnalysisResult(generatedReport);
 
-      // Save analysis result to Firestore
+      // 3. Save analysis result to Firestore
       const analysisData = {
         userId: userId,
         fileName: selectedFile.name,
         analysisReport: generatedReport,
-        // Removed: drawnShapes: drawnShapes, // No longer saving drawn shapes
-        previewImage: previewImage, // Still save the Data URL of the preview image for history
-        simulatedClassification: classificationResult, // Save the simulated classification
+        previewImage: previewImage,
+        simulatedClassification: classificationResultFromBackend,
         timestamp: serverTimestamp()
       };
       const docRef = await addDoc(collection(db, `artifacts/${appId}/users/${userId}/xray_analyses`), analysisData);
       console.log("Analysis result saved to Firestore with ID:", docRef.id);
 
     } catch (error) {
-      console.error("Error during AI analysis or data saving:", error);
-      setModalMessage(`Error during analysis or saving: ${error.message}.`);
+      console.error("Error during analysis or data saving:", error);
+      setModalMessage(`Error during analysis or saving: ${error.message}. Please ensure your backend is running.`);
       setShowModal(true);
       setAnalysisResult("Failed to generate analysis report due to an error.");
     } finally {
@@ -221,7 +234,7 @@ function App() {
   if (!isAuthReady) {
     return (
       <div className="flex items-center justify-center min-h-screen bg-gray-100 font-inter">
-        <div className="text-xl text-gray-700">Loading application...</div>
+        <div className="text-xl text-gray-700">Loading authentication...</div> {/* Added loading message */}
       </div>
     );
   }
@@ -231,8 +244,8 @@ function App() {
       {showModal && <Modal message={modalMessage} onClose={() => setShowModal(false)} />}
 
       {/* Header */}
-      <header className="w-full" style={{ backgroundColor: '#036156' }}> {/* Updated background color */}
-        <h1 className="text-white text-center text-3xl font-bold py-4">MedScan</h1> {/* Added py-4 here */}
+      <header className="w-full" style={{ backgroundColor: '#036156' }}>
+        <h1 className="text-white text-center text-3xl font-bold py-4">MedScan</h1>
       </header>
 
       {/* Main Content Area */}
@@ -250,8 +263,8 @@ function App() {
             <button
               onClick={() => setActiveTab('analyze')}
               className={`py-2 px-4 rounded-l-lg font-semibold transition duration-300 ease-in-out ${activeTab === 'analyze'
-                  ? 'bg-blue-600 text-white'
-                  : 'bg-gray-200 text-gray-700 hover:bg-gray-300'
+                ? 'bg-blue-600 text-white'
+                : 'bg-gray-200 text-gray-700 hover:bg-gray-300'
                 }`}
             >
               Analyze X-Ray
@@ -259,8 +272,8 @@ function App() {
             <button
               onClick={() => setActiveTab('history')}
               className={`py-2 px-4 rounded-r-lg font-semibold transition duration-300 ease-in-out ${activeTab === 'history'
-                  ? 'bg-blue-600 text-white'
-                  : 'bg-gray-200 text-gray-700 hover:bg-gray-300'
+                ? 'bg-blue-600 text-white'
+                : 'bg-gray-200 text-gray-700 hover:bg-gray-300'
                 }`}
             >
               Analysis History
@@ -294,7 +307,7 @@ function App() {
                 </p>
               </div>
 
-              {/* Image Preview Area (no drawing) */}
+              {/* Image Preview Area */}
               {previewImage && (
                 <div className="mb-6 text-center border border-gray-200 rounded-lg shadow-md overflow-hidden">
                   <h2 className="text-xl font-semibold text-gray-800 mb-3 p-3 bg-gray-50">
@@ -305,20 +318,19 @@ function App() {
                       src={previewImage}
                       alt="X-Ray Preview"
                       className="max-w-full h-auto rounded-md"
-                      style={{ maxHeight: '400px', maxWidth: '600px' }} // Ensure image fits
+                      style={{ maxHeight: '400px', maxWidth: '600px' }}
                     />
                   </div>
-                  {/* Removed: Drawing buttons */}
                 </div>
               )}
 
               {/* Analyze Button */}
               <button
                 onClick={handleAnalyze}
-                disabled={!selectedFile || isLoading}
-                className={`w-full py-3 px-6 rounded-md font-semibold text-white transition duration-300 ease-in-out ${selectedFile && !isLoading
-                    ? 'bg-green-600 hover:bg-green-700 shadow-md'
-                    : 'bg-gray-400 cursor-not-allowed'
+                disabled={!selectedFile || isLoading || !isAuthReady || !userId} // Updated disabled condition
+                className={`w-full py-3 px-6 rounded-md font-semibold text-white transition duration-300 ease-in-out ${selectedFile && !isLoading && isAuthReady && userId // Updated enabled condition
+                  ? 'bg-green-600 hover:bg-green-700 shadow-md'
+                  : 'bg-gray-400 cursor-not-allowed'
                   }`}
               >
                 {isLoading ? (
