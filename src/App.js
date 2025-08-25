@@ -8,7 +8,8 @@ import { getFirestore, collection, addDoc, query, orderBy, onSnapshot, serverTim
 // We'll provide default empty/null values for local testing if not explicitly set.
 const appId = process.env.REACT_APP_APP_ID || 'default-app-id-local';
 const firebaseConfig = process.env.REACT_APP_FIREBASE_CONFIG ? JSON.parse(process.env.REACT_APP_FIREBASE_CONFIG) : {};
-const initialAuthToken = process.env.REACT_APP_INITIAL_AUTH_TOKEN || null;
+// Corrected logic to handle the 'null' string from .env file
+const initialAuthToken = process.env.REACT_APP_INITIAL_AUTH_TOKEN === 'null' ? null : process.env.REACT_APP_INITIAL_AUTH_TOKEN;
 
 // Placeholder for Firebase instances
 let app, auth, db;
@@ -17,25 +18,19 @@ let app, auth, db;
 function App() {
   const [user, setUser] = useState(null);
   const [userId, setUserId] = useState(null);
-  const [isAuthReady, setIsAuthReady] = useState(false); // Tracks if Firebase auth is initialized
   const [selectedFile, setSelectedFile] = useState(null);
   const [previewImage, setPreviewImage] = useState(null);
   const [analysisResult, setAnalysisResult] = useState('');
   const [isLoading, setIsLoading] = useState(false);
-  const [showModal, setShowModal] = useState(false);
-  const [modalMessage, setModalMessage] = useState('');
+  // Removed: showModal and modalMessage state variables
   const [analysisHistory, setAnalysisHistory] = useState([]);
   const [activeTab, setActiveTab] = useState('analyze');
 
   // Initialize Firebase and handle authentication
   useEffect(() => {
     try {
-      // Check if firebaseConfig is valid before initializing
       if (Object.keys(firebaseConfig).length === 0) {
         console.warn("Firebase config is empty. Please ensure REACT_APP_FIREBASE_CONFIG is set in .env.local or Firebase is initialized in Canvas.");
-        setModalMessage("Firebase configuration is missing. Please check your .env.local file or run in Canvas environment.");
-        setShowModal(true);
-        setIsAuthReady(true); // Mark ready but with an error state
         return;
       }
 
@@ -45,7 +40,6 @@ function App() {
 
       const unsubscribe = onAuthStateChanged(auth, async (currentUser) => {
         if (!currentUser) {
-          // If no user is logged in, try to sign in with custom token or anonymously
           try {
             if (initialAuthToken) {
               await signInWithCustomToken(auth, initialAuthToken);
@@ -56,32 +50,25 @@ function App() {
             }
           } catch (error) {
             console.error("Firebase authentication error:", error);
-            setModalMessage(`Authentication failed: ${error.message}. Please try again.`);
-            setShowModal(true);
+            // Removed: setModalMessage and setShowModal calls
           }
         }
         setUser(auth.currentUser);
-        // Set userId based on current user or a random UUID for anonymous
         setUserId(auth.currentUser?.uid || crypto.randomUUID());
-        setIsAuthReady(true); // Mark authentication as ready
       });
 
-      return () => unsubscribe(); // Clean up the auth listener
+      return () => unsubscribe();
     } catch (error) {
       console.error("Failed to initialize Firebase:", error);
-      setModalMessage(`Firebase initialization failed: ${error.message}.`);
-      setShowModal(true);
-      setIsAuthReady(true); // Mark ready but with an error
+      // Removed: setModalMessage and setShowModal calls
     }
-  }, []); // Empty dependency array means this runs once on mount
+  }, []);
 
   // Fetch analysis history
   useEffect(() => {
-    // Only fetch history if Firebase is ready and userId is available
-    if (isAuthReady && userId && db) { // Ensure db is also available
+    if (userId && db) {
       const historyCollectionRef = collection(db, `artifacts/${appId}/users/${userId}/xray_analyses`);
 
-      // Order by timestamp to get most recent first
       const q = query(historyCollectionRef, orderBy('timestamp', 'desc'));
 
       const unsubscribe = onSnapshot(q, (snapshot) => {
@@ -92,13 +79,12 @@ function App() {
         setAnalysisHistory(history);
       }, (error) => {
         console.error("Error fetching analysis history:", error);
-        setModalMessage(`Failed to load history: ${error.message}.`);
-        setShowModal(true);
+        // Removed: setModalMessage and setShowModal calls
       });
 
-      return () => unsubscribe(); // Clean up the snapshot listener
+      return () => unsubscribe();
     }
-  }, [isAuthReady, userId, db, appId]); // Re-run when auth state, userId, or appId changes
+  }, [userId, db, appId]);
 
   // Handle file selection
   const handleFileChange = (event) => {
@@ -120,16 +106,13 @@ function App() {
 
   // Handle AI analysis via Backend and then Gemini
   const handleAnalyze = async () => {
-    // These checks should ideally be redundant if the button is disabled correctly,
-    // but they serve as a fallback for robustness.
     if (!selectedFile) {
-      setModalMessage("Please upload an X-ray image first.");
-      setShowModal(true);
+      // Replaced modal with a simple console error for silent failure
+      console.error("No file selected.");
       return;
     }
-    if (!isAuthReady || !userId) { // More robust check
-      setModalMessage("Authentication is not ready. Please wait a moment.");
-      setShowModal(true);
+    if (!userId) {
+      console.error("Authentication not ready. Cannot process request.");
       return;
     }
 
@@ -137,12 +120,11 @@ function App() {
     setAnalysisResult('');
 
     try {
-      // 1. Send image to your Python Flask Backend for AI classification
       const formData = new FormData();
       formData.append('image', selectedFile);
       formData.append('userId', userId);
 
-      const backendApiUrl = 'http://127.0.0.1:5000/api/analyze_xray'; // Your Flask backend URL
+      const backendApiUrl = 'http://127.0.0.1:5000/api/analyze_xray';
 
       const backendResponse = await fetch(backendApiUrl, {
         method: 'POST',
@@ -151,26 +133,37 @@ function App() {
 
       const backendResult = await backendResponse.json();
       let classificationResultFromBackend = "Unknown";
+      let measurements = {};
 
       if (backendResult.status === "success" && backendResult.classificationResult) {
         classificationResultFromBackend = backendResult.classificationResult;
+        measurements = backendResult.measurements || {};
         console.log("AI Classification from Backend:", classificationResultFromBackend);
+        console.log("Simulated Measurements:", measurements);
       } else {
         console.error("Backend response error:", backendResult.error || backendResult);
-        setModalMessage(`Error from backend: ${backendResult.error || 'Unknown error'}. Please ensure your backend is running.`);
-        setShowModal(true);
+        // Removed modal call here
         setIsLoading(false);
         return;
       }
 
-      // 2. Call Gemini API to generate the detailed report based on the backend's classification
-      const basePrompt = `Generate a detailed mock X-ray report for a lateral view of a human foot, specifically mentioning the calcaneum, plantar fascia, medial longitudinal arch, and the presence/absence of a calcaneal spur. The AI classification for this image is: **${classificationResultFromBackend}**. Based on this classification, provide findings. Example for Normal: 'Calcaneal spur: Absent. Medial longitudinal arch: Maintained. Plantar fascia: Normal.' Example for Abnormal: 'Calcaneal spur: Present, superior aspect. Medial longitudinal arch: Mildly flattened. Plantar fascia: Thickened.'`;
+      const basePrompt = `Generate a detailed mock X-ray report for a lateral view of a human foot. The AI classification for this image is: **${classificationResultFromBackend}**. Based on this classification, provide findings.
+      
+      **Instructions for the Report:**
+      - The calcaneal spur measurement is ${measurements.calcaneumSpur}mm.
+      - The Navicular Index measurement is ${measurements.navicularIndex}.
+      - A navicular index of < 9.96 is normal; >= 9.96 is abnormal.
+      - A calcaneal spur measurement > 2mm is considered abnormal.
+      - DO NOT mention Bohler's angle.
+      - The report should be specific to the given measurements and classification.
+      - Do NOT include any patient information (e.g., Patient ID, name, date, etc.)
+      `;
 
       let chatHistory = [];
       chatHistory.push({ role: "user", parts: [{ text: basePrompt }] });
 
       const payload = { contents: chatHistory };
-      const apiKey = process.env.REACT_APP_GEMINI_API_KEY || "AIzaSyCyGCsODe8sjRJtAynWUG3yx7zgHU-RfAc"; // Canvas will automatically provide this in runtime, or use a real key for local testing
+      const apiKey = "AIzaSyBn1gxPv3t3Ew5jJ_cBnsu-QxSyHBaWyMY";
       const apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${apiKey}`;
 
       const geminiResponse = await fetch(apiUrl, {
@@ -182,137 +175,87 @@ function App() {
       const geminiResult = await geminiResponse.json();
       let generatedReport = "Could not generate analysis report from Gemini.";
 
-      if (geminiResult.candidates && geminiResult.candidates.length > 0 &&
-        geminiResult.candidates[0].content && geminiResult.candidates[0].content.parts &&
-        geminiResult.candidates[0].content.parts.length > 0) {
+      if (geminiResult.candidates && geminiResult.candidates[0].content && geminiResult.candidates[0].content.parts && geminiResult.candidates[0].content.parts.length > 0) {
         generatedReport = geminiResult.candidates[0].content.parts[0].text;
       } else {
         console.error("Gemini API response structure unexpected:", geminiResult);
       }
       setAnalysisResult(generatedReport);
 
-      // 3. Save analysis result to Firestore
       const analysisData = {
         userId: userId,
         fileName: selectedFile.name,
         analysisReport: generatedReport,
         previewImage: previewImage,
         simulatedClassification: classificationResultFromBackend,
+        measurements: measurements,
         timestamp: serverTimestamp()
       };
       const docRef = await addDoc(collection(db, `artifacts/${appId}/users/${userId}/xray_analyses`), analysisData);
       console.log("Analysis result saved to Firestore with ID:", docRef.id);
 
     } catch (error) {
-      console.error("Error during analysis or data saving:", error);
-      setModalMessage(`Error during analysis or saving: ${error.message}. Please ensure your backend is running.`);
-      setShowModal(true);
+      console.error("Error during analysis or saving:", error);
+      // Removed modal call here
       setAnalysisResult("Failed to generate analysis report due to an error.");
     } finally {
       setIsLoading(false);
     }
   };
 
-  // Custom Modal Component
   const Modal = ({ message, onClose }) => {
     return (
       <div className="fixed inset-0 bg-gray-600 bg-opacity-50 flex items-center justify-center z-50">
         <div className="bg-white p-6 rounded-lg shadow-xl max-w-sm w-full mx-4">
           <h3 className="text-lg font-semibold text-gray-800 mb-4">Notification</h3>
           <p className="text-gray-700 mb-6">{message}</p>
-          <button
-            onClick={onClose}
-            className="w-full bg-blue-600 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded-md transition duration-300 ease-in-out"
-          >
-            Close
-          </button>
+          <button onClick={onClose} className="w-full bg-blue-600 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded-md transition duration-300 ease-in-out">Close</button>
         </div>
       </div>
     );
   };
 
-  if (!isAuthReady) {
-    return (
-      <div className="flex items-center justify-center min-h-screen bg-gray-100 font-inter">
-        <div className="text-xl text-gray-700">Loading authentication...</div> {/* Added loading message */}
-      </div>
-    );
-  }
-
+  // The application now renders immediately, without a loading screen.
+  // The UI and buttons are controlled by the `userId` state, which is set asynchronously.
   return (
     <div className="min-h-screen bg-gray-200 flex flex-col items-center font-inter">
-      {showModal && <Modal message={modalMessage} onClose={() => setShowModal(false)} />}
+      {/* Removed: Conditional rendering of the modal */}
 
-      {/* Header */}
       <header className="w-full" style={{ backgroundColor: '#036156' }}>
         <h1 className="text-white text-center text-3xl font-bold py-4">MedScan</h1>
       </header>
 
-      {/* Main Content Area */}
       <main className="flex-grow flex items-center justify-center w-full p-4">
         <div className="bg-white p-8 rounded-xl shadow-lg w-full max-w-3xl text-center">
-          {/* User Info */}
           {userId && (
-            <p className="text-sm text-gray-600 text-center mb-4">
-              User ID: <span className="font-semibold">{userId}</span>
-            </p>
+            <p className="text-sm text-gray-600 text-center mb-4">User ID: <span className="font-semibold">{userId}</span></p>
           )}
 
-          {/* Tabs for Analyze and History */}
+          {/* Main content is now rendered immediately. */}
+          {/* The functionality will be disabled if userId is not ready. */}
+
           <div className="flex justify-center mb-6">
-            <button
-              onClick={() => setActiveTab('analyze')}
-              className={`py-2 px-4 rounded-l-lg font-semibold transition duration-300 ease-in-out ${activeTab === 'analyze'
-                ? 'bg-blue-600 text-white'
-                : 'bg-gray-200 text-gray-700 hover:bg-gray-300'
-                }`}
-            >
-              Analyze X-Ray
-            </button>
-            <button
-              onClick={() => setActiveTab('history')}
-              className={`py-2 px-4 rounded-r-lg font-semibold transition duration-300 ease-in-out ${activeTab === 'history'
-                ? 'bg-blue-600 text-white'
-                : 'bg-gray-200 text-gray-700 hover:bg-gray-300'
-                }`}
-            >
-              Analysis History
-            </button>
+            <button onClick={() => setActiveTab('analyze')} className={`py-2 px-4 rounded-l-lg font-semibold transition duration-300 ease-in-out ${activeTab === 'analyze' ? 'bg-blue-600 text-white' : 'bg-gray-200 text-gray-700 hover:bg-gray-300'}`}>Analyze X-Ray</button>
+            <button onClick={() => setActiveTab('history')} className={`py-2 px-4 rounded-r-lg font-semibold transition duration-300 ease-in-out ${activeTab === 'history' ? 'bg-blue-600 text-white' : 'bg-gray-200 text-gray-700 hover:bg-gray-300'}`}>Analysis History</button>
           </div>
 
           {activeTab === 'analyze' && (
             <>
-              {/* Upload Section */}
               <div className="mb-6 border-b pb-4">
-                <label htmlFor="xray-upload" className="block text-gray-700 text-sm font-bold mb-2 sr-only">
-                  Upload X-Ray Image
-                </label>
+                <label htmlFor="xray-upload" className="block text-gray-700 text-sm font-bold mb-2 sr-only">Upload X-Ray Image</label>
                 <div className="relative border border-gray-300 rounded-md overflow-hidden bg-white">
-                  <input
-                    type="file"
-                    id="xray-upload"
-                    accept="image/*"
-                    onChange={handleFileChange}
-                    className="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
-                  />
+                  <input type="file" id="xray-upload" accept="image/*" onChange={handleFileChange} className="absolute inset-0 w-full h-full opacity-0 cursor-pointer" />
                   <div className="flex items-center justify-between px-4 py-2 bg-white text-gray-700 border-r border-gray-300">
-                    <span className="truncate pr-2">
-                      {selectedFile ? selectedFile.name : 'Choose File'}
-                    </span>
+                    <span className="truncate pr-2">{selectedFile ? selectedFile.name : 'Choose File'}</span>
                     <span className="bg-gray-100 text-gray-800 text-xs font-medium px-2.5 py-0.5 rounded-full">Browse</span>
                   </div>
                 </div>
-                <p className="mt-2 text-xs text-gray-500">
-                  Upload an X-ray image for analysis.
-                </p>
+                <p className="mt-2 text-xs text-gray-500">Upload an X-ray image for analysis.</p>
               </div>
 
-              {/* Image Preview Area */}
               {previewImage && (
                 <div className="mb-6 text-center border border-gray-200 rounded-lg shadow-md overflow-hidden">
-                  <h2 className="text-xl font-semibold text-gray-800 mb-3 p-3 bg-gray-50">
-                    Image Preview
-                  </h2>
+                  <h2 className="text-xl font-semibold text-gray-800 mb-3 p-3 bg-gray-50">Image Preview</h2>
                   <div className="relative flex justify-center items-center bg-gray-100 p-2">
                     <img
                       src={previewImage}
@@ -324,38 +267,22 @@ function App() {
                 </div>
               )}
 
-              {/* Analyze Button */}
-              <button
-                onClick={handleAnalyze}
-                disabled={!selectedFile || isLoading || !isAuthReady || !userId} // Updated disabled condition
-                className={`w-full py-3 px-6 rounded-md font-semibold text-white transition duration-300 ease-in-out ${selectedFile && !isLoading && isAuthReady && userId // Updated enabled condition
-                  ? 'bg-green-600 hover:bg-green-700 shadow-md'
-                  : 'bg-gray-400 cursor-not-allowed'
-                  }`}
-              >
+              <button onClick={handleAnalyze} disabled={!selectedFile || isLoading || !userId} className={`w-full py-3 px-6 rounded-md font-semibold text-white transition duration-300 ease-in-out ${selectedFile && !isLoading && userId ? 'bg-green-600 hover:bg-green-700 shadow-md' : 'bg-gray-400 cursor-not-allowed'}`}>
                 {isLoading ? (
                   <span className="flex items-center justify-center">
-                    <svg className="animate-spin -ml-1 mr-3 h-5 w-5 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
-                      <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
-                      <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
-                    </svg>
+                    <svg className="animate-spin -ml-1 mr-3 h-5 w-5 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg>
                     Analyzing...
                   </span>
                 ) : (
                   'Analyze X-Ray'
                 )}
               </button>
-              <p className="mt-2 text-sm text-gray-600">
-                (Note: This analysis is simulated. The report is saved to your private history.)
-              </p>
+              <p className="mt-2 text-sm text-gray-600">(Note: This analysis is simulated. The report is saved to your private history.)</p>
 
-              {/* Analysis Results */}
               {analysisResult && (
                 <div className="bg-blue-50 border border-blue-200 text-blue-800 p-4 rounded-lg shadow-sm mt-6">
                   <h2 className="text-xl font-semibold mb-3">Analysis Report:</h2>
-                  <div className="whitespace-pre-wrap text-gray-800 leading-relaxed">
-                    {analysisResult}
-                  </div>
+                  <div className="whitespace-pre-wrap text-gray-800 leading-relaxed">{analysisResult}</div>
                 </div>
               )}
             </>
@@ -363,36 +290,20 @@ function App() {
 
           {activeTab === 'history' && (
             <div className="mt-4">
-              <h2 className="text-2xl font-bold text-gray-800 mb-4 text-center">
-                Your Analysis History
-              </h2>
-              {analysisHistory.length === 0 ? (
-                <p className="text-gray-600 text-center">No analysis history found. Upload an X-ray to get started!</p>
-              ) : (
+              <h2 className="text-2xl font-bold text-gray-800 mb-4 text-center">Your Analysis History</h2>
+              {analysisHistory.length === 0 ? (<p className="text-gray-600 text-center">No analysis history found. Upload an X-ray to get started!</p>) : (
                 <div className="space-y-6">
                   {analysisHistory.map((entry) => (
                     <div key={entry.id} className="bg-gray-50 p-5 rounded-lg shadow-md border border-gray-200">
-                      <p className="text-sm text-gray-500 mb-2">
-                        Uploaded: {entry.timestamp ? new Date(entry.timestamp.toDate()).toLocaleString() : 'N/A'}
-                      </p>
+                      <p className="text-sm text-gray-500 mb-2">Uploaded: {entry.timestamp ? new Date(entry.timestamp.toDate()).toLocaleString() : 'N/A'}</p>
                       <p className="text-lg font-semibold text-gray-700 mb-3">File: {entry.fileName}</p>
-
-                      {/* Display the image preview from history */}
                       {entry.previewImage && (
                         <div className="relative flex justify-center items-center bg-gray-100 p-2 mb-4">
-                          <img
-                            src={entry.previewImage}
-                            alt={`X-Ray for ${entry.fileName}`}
-                            className="max-w-full h-auto rounded-lg shadow-sm border border-gray-100"
-                            style={{ maxHeight: '250px', maxWidth: '400px' }}
-                          />
+                          <img src={entry.previewImage} alt={`X-Ray for ${entry.fileName}`} className="max-w-full h-auto rounded-lg shadow-sm border border-gray-100" style={{ maxHeight: '250px', maxWidth: '400px' }} />
                         </div>
                       )}
-
                       <h3 className="text-md font-bold text-gray-800 mb-2">Report:</h3>
-                      <div className="whitespace-pre-wrap text-gray-700 text-sm leading-relaxed border border-gray-200 p-3 rounded-md bg-white">
-                        {entry.analysisReport}
-                      </div>
+                      <div className="whitespace-pre-wrap text-gray-700 text-sm leading-relaxed border border-gray-200 p-3 rounded-md bg-white">{entry.analysisReport}</div>
                     </div>
                   ))}
                 </div>
@@ -402,7 +313,6 @@ function App() {
         </div>
       </main>
 
-      {/* Footer */}
       <footer className="w-full py-3 text-center text-sm mt-auto" style={{ backgroundColor: '#036156' }}>
         <span className="text-white">&copy; 2025 MedScan</span>
       </footer>
