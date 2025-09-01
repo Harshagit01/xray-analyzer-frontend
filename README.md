@@ -1,70 +1,88 @@
-# Getting Started with Create React App
+AI-Powered X-Ray Analysis Prototype
+An end-to-end web application that uses a custom-trained AI model to classify X-ray images of the foot and generate a detailed report.
 
-This project was bootstrapped with [Create React App](https://github.com/facebook/create-react-app).
+1. Project Overview & Features
+This project demonstrates a full-stack, AI-driven application designed to assist in the preliminary assessment of foot health. The application's core function is to classify X-ray images as "Normal" or "Abnormal" and provide a structured, human-readable report.
 
-## Available Scripts
+Key Features:
 
-In the project directory, you can run:
+Custom AI Classification: A deep learning model, trained on a real dataset, classifies X-ray images.
 
-### `npm start`
+Automated Report Generation: The Gemini API is used to create a detailed, professional-sounding report based on the AI's classification.
 
-Runs the app in the development mode.\
-Open [http://localhost:3000](http://localhost:3000) to view it in your browser.
+Measurement Simulation: The application simulates key clinical measurements, such as the Navicular Index (>9.96 for abnormal) and Calcaneal Spur (>2mm for abnormal), based on the AI's output.
 
-The page will reload when you make changes.\
-You may also see any lint errors in the console.
+User History: All analysis reports are saved to a private, user-specific history in Firebase Firestore.
 
-### `npm test`
+Modern & Responsive UI: Built with React and Tailwind CSS for a clean, professional user experience.
 
-Launches the test runner in the interactive watch mode.\
-See the section about [running tests](https://facebook.github.io/create-react-app/docs/running-tests) for more information.
+2. AI Model & Results
+The AI model is a Convolutional Neural Network (CNN) built with TensorFlow/Keras and uses transfer learning with a pre-trained VGG16 model. This approach allows for a high level of accuracy despite the limited size of the training dataset.
 
-### `npm run build`
+Training Details:
 
-Builds the app for production to the `build` folder.\
-It correctly bundles React in production mode and optimizes the build for the best performance.
+Dataset: [Number] X-ray images of the foot, classified into Normal and Abnormal categories.
 
-The build is minified and the filenames include the hashes.\
-Your app is ready to be deployed!
+Architecture: VGG16 (pre-trained on ImageNet) with a custom classification layer.
 
-See the section about [deployment](https://facebook.github.io/create-react-app/docs/deployment) for more information.
+Model Performance:
 
-### `npm run eject`
+The model achieved an accuracy of approximately 65.31% on the validation data. The classification report below highlights its performance on both classes.
 
-**Note: this is a one-way operation. Once you `eject`, you can't go back!**
+Classification Report:
+              precision    recall  f1-score   support
 
-If you aren't satisfied with the build tool and configuration choices, you can `eject` at any time. This command will remove the single build dependency from your project.
+      Normal       0.60      0.32      0.41        19
+    Abnormal       0.67      0.87      0.75        30
 
-Instead, it will copy all the configuration files and the transitive dependencies (webpack, Babel, ESLint, etc) right into your project so you have full control over them. All of the commands except `eject` will still work, but they will point to the copied scripts so you can tweak them. At this point you're on your own.
+    accuracy                           0.65        49
+   macro avg       0.63      0.59      0.58        49
+weighted avg       0.64      0.65      0.62        49
 
-You don't have to ever use `eject`. The curated feature set is suitable for small and middle deployments, and you shouldn't feel obligated to use this feature. However we understand that this tool wouldn't be useful if you couldn't customize it when you are ready for it.
+Recall for Abnormal (0.87): The model is very good at correctly identifying 87% of the actual abnormal cases.
 
-## Learn More
+Recall for Normal (0.32): The model struggles to correctly identify normal cases, misclassifying them as abnormal. This is a common challenge with small datasets and a bias that would be addressed in future development.
 
-You can learn more in the [Create React App documentation](https://facebook.github.io/create-react-app/docs/getting-started).
+3. Project Architecture
+The project is built as a full-stack application with distinct, interconnected components.
 
-To learn React, check out the [React documentation](https://reactjs.org/).
+Frontend (React App): Sends the uploaded image to the backend and displays the final report.
 
-### Code Splitting
+Backend (Python Flask): The central hub that loads the AI model, performs classification, and uses a prompt for the Gemini API to generate a report.
 
-This section has moved here: [https://facebook.github.io/create-react-app/docs/code-splitting](https://facebook.github.io/create-react-app/docs/code-splitting)
+Cloud Services: Firebase handles user authentication and database storage. Gemini provides the generative AI for report creation.
 
-### Analyzing the Bundle Size
+4. Getting Started
+To run this project locally, follow these steps.
 
-This section has moved here: [https://facebook.github.io/create-react-app/docs/analyzing-the-bundle-size](https://facebook.github.io/create-react-app/docs/analyzing-the-bundle-size)
+Prerequisites
+Python 3.8+ & pip
 
-### Making a Progressive Web App
+Node.js & npm
 
-This section has moved here: [https://facebook.github.io/create-react-app/docs/making-a-progressive-web-app](https://facebook.github.io/create-react-app/docs/making-a-progressive-web-app)
+Git
 
-### Advanced Configuration
+Setup
+Clone the repositories:
 
-This section has moved here: [https://facebook.github.io/create-react-app/docs/advanced-configuration](https://facebook.github.io/create-react-app/docs/advanced-configuration)
+git clone https://github.com/Harshagit01/xray-analyzer-frontend.git
+git clone https://github.com/Harshagit01/xray-analyzer-backend.git
 
-### Deployment
+Backend Setup:
 
-This section has moved here: [https://facebook.github.io/create-react-app/docs/deployment](https://facebook.github.io/create-react-app/docs/deployment)
+cd xray-analyzer-backend
+pip install -r requirements.txt # (assuming you have a requirements file)
+python app.py
 
-### `npm run build` fails to minify
+Frontend Setup:
 
-This section has moved here: [https://facebook.github.io/create-react-app/docs/troubleshooting#npm-run-build-fails-to-minify](https://facebook.github.io/create-react-app/docs/troubleshooting#npm-run-build-fails-to-minify)
+cd xray-analyzer-frontend
+npm install
+npm start
+
+5. Future Improvements
+AI Model Accuracy: Implement more advanced techniques like transfer learning and acquire a larger, more diverse dataset for improved accuracy.
+
+Keypoint Detection: Train a new AI model to detect key anatomical points on the X-ray to perform real, not simulated, clinical measurements.
+
+Full User Management: Add full user registration and login functionality./create-react-app/docs/troubleshooting#npm-run-build-fails-to-minify](https://facebook.github.io/create-react-app/docs/troubleshooting#npm-run-build-fails-to-minify)
